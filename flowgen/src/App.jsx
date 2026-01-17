@@ -9,6 +9,11 @@ import ManagerLayout from "./pages/manager/ManagerLayout";
 import ManagerHome from "./pages/manager/ManagerHome";
 import ManagerTasks from "./pages/manager/ManagerTasks";
 
+//Employee pages
+import EmployeeLayout from "./pages/employee/EmployeeLayout";
+import EmployeeHome from "./pages/employee/EmployeeHome";
+import EmployeeTaskDetail from "./pages/employee/EmployeeTaskDetail";
+
 // Employee placeholder for now
 function EmployeeHome() {
   return <h1 className="p-10 text-2xl font-bold">Employee Dashboard</h1>;
@@ -28,8 +33,11 @@ function App() {
           <Route path="tasks" element={<ManagerTasks />} />
         </Route>
 
-        {/* Employee routes (next step) */}
-        <Route path="/employee/home" element={<EmployeeHome />} />
+                {/* ✅ Employee Dashboard with Layout */}
+        <Route path="/employee" element={<EmployeeLayout />}>
+          <Route path="home" element={<EmployeeHome />} />
+          <Route path="tasks/:taskId" element={<EmployeeTaskDetail />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );

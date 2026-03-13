@@ -82,3 +82,34 @@ def login(request: LoginRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+@app.get("/api/employees/{employee_id}/tasks")
+def get_employee_tasks(employee_id: str):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+    
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        # Join tasks and assignments to get all details for this specific employee
+        query = """
+            SELECT t.task_id, t.title, t.task_type, t.priority, t.due_date, 
+                   a.status, a.allocation_type 
+            FROM tasks t
+            JOIN task_assignments a ON t.task_id = a.task_id
+            WHERE a.employee_id = %s
+            ORDER BY t.due_date ASC;
+        """
+        cursor.execute(query, (employee_id,))
+        tasks = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return {
+            "status": "success",
+            "message": "Tasks retrieved successfully",
+            "data": tasks
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")

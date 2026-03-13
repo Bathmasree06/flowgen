@@ -1,41 +1,25 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-
-import RoleSelect from "./pages/RoleSelect";
-import ManagerLogin from "./pages/ManagerLogin";
-import EmployeeLogin from "./pages/EmployeeLogin";
-
-// Manager pages
-import ManagerLayout from "./pages/manager/ManagerLayout";
-import ManagerHome from "./pages/manager/ManagerHome";
-import ManagerTasks from "./pages/manager/ManagerTasks";
-
-// Employee pages
-import EmployeeLayout from "./pages/employee/EmployeeLayout";
-import EmployeeHome from "./pages/employee/EmployeeHome";
-import EmployeeTaskDetail from "./pages/employee/EmployeeTaskDetail";
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Login from './pages/Login';
+import EmployeeHome from './pages/employee/EmployeeHome';
+import ManagerHome from './pages/manager/ManagerHome';
 
 function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
-        <Route path="/" element={<RoleSelect />} />
+        {/* Default route is now the unified login page */}
+        <Route path="/" element={<Login />} />
+        
+        {/* Employee Routes */}
+        <Route path="/employee/dashboard" element={<EmployeeHome />} />
+        
+        {/* Manager Routes */}
+        <Route path="/manager/dashboard" element={<ManagerHome />} />
 
-        <Route path="/login/manager" element={<ManagerLogin />} />
-        <Route path="/login/employee" element={<EmployeeLogin />} />
-
-        {/* ✅ Manager Dashboard with Layout */}
-        <Route path="/manager" element={<ManagerLayout />}>
-          <Route path="home" element={<ManagerHome />} />
-          <Route path="tasks" element={<ManagerTasks />} />
-        </Route>
-
-        {/* ✅ Employee Dashboard with Layout */}
-        <Route path="/employee" element={<EmployeeLayout />}>
-          <Route path="home" element={<EmployeeHome />} />
-          <Route path="tasks/:taskId" element={<EmployeeTaskDetail />} />
-        </Route>
+        {/* Catch-all route to redirect unknown URLs back to login */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
 }
 

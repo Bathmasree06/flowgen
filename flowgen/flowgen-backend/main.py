@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from database import get_db_connection
 from psycopg2.extras import RealDictCursor
+from typing import Union
 
 app = FastAPI(title="Flowgen API")
 
@@ -19,6 +20,11 @@ app.add_middleware(
 class LoginRequest(BaseModel):
     employee_id: str
     password: str
+
+class TaskUpdateRequest(BaseModel):
+    employee_id: str
+    actual_hours: Union[int, float]
+    status: str
 
 @app.get("/")
 def read_root():
@@ -113,3 +119,34 @@ def get_employee_tasks(employee_id: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+
+@app.put("/api/tasks/{task_id}/update")
+def update_task(task_id: str, request: TaskUpdateRequest):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cursor = conn.cursor()
+        # Update the actual_hours and status in the task_assignments table
+        cursor.execute("""
+            UPDATE task_assignments 
+            SET actual_hours = %s, status = %s 
+            WHERE task_id = %s AND employee_id = %s
+        """, (request.actual_hours, request.status, task_id, request.employee_id))
+
+        # Ensure a row was actually modified (prevents editing other people's tasks)
+        if cursor.rowcount == 0:
+            conn.rollback()
+            raise HTTPException(status_code=404, detail="Task not found or not assigned to you")
+
+        # Save the changes permanently
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"status": "success", "message": "Task updated successfully"}
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Database update failed: {str(e)}")

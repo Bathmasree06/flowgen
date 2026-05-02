@@ -10,7 +10,8 @@ export default function EmployeeHome() {
   const navigate = useNavigate();
 
   // --- STATE FOR PROFESSIONAL FEATURES ---
-  const [taskFilter, setTaskFilter] = useState('active'); // 'all', 'active', 'completed'
+  const [taskFilter, setTaskFilter] = useState('active'); 
+  const [searchQuery, setSearchQuery] = useState(''); // NEW: Search state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [updateHours, setUpdateHours] = useState(0);
@@ -46,7 +47,6 @@ export default function EmployeeHome() {
     navigate('/');
   };
 
-  // --- UPDATE LOGIC WITH BULLETPROOF ERROR HANDLING ---
   const openUpdateModal = (task) => {
     setSelectedTask(task);
     setUpdateHours(task.actual_hours || 0);
@@ -67,7 +67,6 @@ export default function EmployeeHome() {
 
     const parsedHours = parseFloat(updateHours);
     
-    // Workflow Constraints
     if (isNaN(parsedHours) || parsedHours < 0) {
       setError("Please enter a valid number for hours.");
       setIsUpdating(false);
@@ -94,11 +93,9 @@ export default function EmployeeHome() {
       const result = await response.json();
       
       if (!response.ok) {
-        // --- BULLETPROOF FASTAPI ERROR PARSER ---
         let errorMessage = 'Failed to update task.';
         if (result.detail) {
           if (Array.isArray(result.detail)) {
-            // Extracts specific validation failures from FastAPI (e.g., "actual_hours: value is not a valid float")
             errorMessage = result.detail.map(err => `${err.loc[err.loc.length - 1]}: ${err.msg}`).join(', ');
           } else if (typeof result.detail === 'string') {
             errorMessage = result.detail;
@@ -109,7 +106,6 @@ export default function EmployeeHome() {
         throw new Error(errorMessage);
       }
 
-      // Update local state instantly
       setTasks(currentTasks => 
         currentTasks.map(t => 
           t.task_id === selectedTask.task_id 
@@ -126,10 +122,28 @@ export default function EmployeeHome() {
     }
   };
   
-  // --- FILTER & CALCULATIONS ---
+  // --- NEW: OVERDUE LOGIC ---
+  const isOverdue = (dueDate, status) => {
+    if (status === 'completed') return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Strip time for accurate day comparison
+    const taskDate = new Date(dueDate);
+    return taskDate < today;
+  };
+
+  // --- FILTER & SEARCH CALCULATIONS ---
   const filteredTasks = tasks.filter(task => {
-    if (taskFilter === 'active') return task.status !== 'completed';
-    if (taskFilter === 'completed') return task.status === 'completed';
+    // 1. Tab Filter
+    if (taskFilter === 'active' && task.status === 'completed') return false;
+    if (taskFilter === 'completed' && task.status !== 'completed') return false;
+    
+    // 2. Search Filter
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      const titleMatch = task.title?.toLowerCase().includes(query);
+      const idMatch = task.task_id?.toString().toLowerCase().includes(query);
+      if (!titleMatch && !idMatch) return false;
+    }
     return true; 
   });
 
@@ -208,91 +222,180 @@ export default function EmployeeHome() {
           {/* TASKS VIEW */}
           {activeTab === 'tasks' && (
             <div className="max-w-5xl mx-auto animate-in fade-in duration-300">
-              <header className="mb-6 flex justify-between items-end border-b border-slate-200 pb-4">
+              <header className="mb-6 flex flex-col md:flex-row md:items-end justify-between border-b border-slate-200 pb-4 gap-4">
                 <div>
                   <h1 className="text-2xl font-bold text-slate-800">My Tasks</h1>
                   <p className="text-slate-500 text-sm mt-1">Manage and update your assigned responsibilities.</p>
                 </div>
-                <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
-                  {['all', 'active', 'completed'].map(filter => (
-                    <button
-                      key={filter}
-                      onClick={() => setTaskFilter(filter)}
-                      className={`px-4 py-1.5 text-sm font-medium rounded-md capitalize transition-all ${taskFilter === filter ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                      {filter}
-                    </button>
-                  ))}
+                
+                {/* NEW: Filters and Search Bar Container */}
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input 
+                    type="text" 
+                    placeholder="Search by ID or title..." 
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-colors shadow-sm"
+                  />
+                  <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                    {['all', 'active', 'completed'].map(filter => (
+                      <button
+                        key={filter}
+                        onClick={() => setTaskFilter(filter)}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-md capitalize transition-all ${taskFilter === filter ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                      >
+                        {filter}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </header>
 
               <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
                 {filteredTasks.length === 0 ? (
-                  <div className="p-10 text-center text-slate-500">No tasks found for this filter.</div>
+                  <div className="p-10 text-center text-slate-500">No tasks found. Try adjusting your search or filters.</div>
                 ) : (
                   <div className="divide-y divide-slate-100">
-                    {filteredTasks.map((task) => (
-                      <div key={task.task_id} className="p-5 hover:bg-slate-50 transition-colors flex flex-col md:flex-row md:items-center justify-between group gap-4">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-mono text-slate-400">{task.task_id}</span>
-                            <h3 className={`text-base font-semibold ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{task.title}</h3>
-                          </div>
-                          <div className="flex items-center gap-3 text-sm">
-                            <span className="text-slate-500">{task.task_type}</span>
-                            <span className="text-slate-300">•</span>
-                            <span className="text-slate-500">Due: {new Date(task.due_date).toLocaleDateString()}</span>
-                            <span className="text-slate-300">•</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-500">Effort: <span className="font-medium text-slate-700">{task.actual_hours || 0}</span> / {task.estimated_hours}h</span>
-                              <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
-                                <div 
-                                className={`h-full rounded-full ${task.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`} 
-                                style={{ width: `${Math.min(100, ((task.actual_hours || 0) / task.estimated_hours) * 100)}%` }}
-                                ></div>
+                    {filteredTasks.map((task) => {
+                      const taskIsOverdue = isOverdue(task.due_date, task.status);
+                      
+                      return (
+                        <div key={task.task_id} className={`p-5 hover:bg-slate-50 transition-colors flex flex-col md:flex-row md:items-center justify-between group gap-4 ${taskIsOverdue ? 'bg-red-50/30' : ''}`}>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-3">
+                              <span className="text-xs font-mono text-slate-400">{task.task_id}</span>
+                              <h3 className={`text-base font-semibold ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                                {task.title}
+                              </h3>
+                              {/* NEW: Overdue Badge */}
+                              {taskIsOverdue && (
+                                <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold uppercase tracking-wider rounded border border-red-200">Overdue</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-3 text-sm">
+                              <span className="text-slate-500">{task.task_type}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className={`${taskIsOverdue ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                                Due: {new Date(task.due_date).toLocaleDateString()}
+                              </span>
+                              <span className="text-slate-300">•</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-500">Effort: <span className="font-medium text-slate-700">{task.actual_hours || 0}</span> / {task.estimated_hours}h</span>
+                                <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                  <div 
+                                  className={`h-full rounded-full ${task.status === 'completed' ? 'bg-green-500' : 'bg-blue-500'}`} 
+                                  style={{ width: `${Math.min(100, ((task.actual_hours || 0) / task.estimated_hours) * 100)}%` }}
+                                  ></div>
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="flex items-center gap-3">
-                          <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${getPriorityColor(task.priority)}`}>{task.priority?.toUpperCase()}</span>
-                          <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 capitalize">{task.status?.replace('_', ' ')}</span>
-                          {task.status !== 'completed' && (
-                            <button 
-                              onClick={() => openUpdateModal(task)}
-                              className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-lg hover:border-blue-300 hover:text-blue-700 transition-colors shadow-sm"
-                            >
-                              Log Time
-                            </button>
-                          )}
+                          <div className="flex items-center gap-3">
+                            <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${getPriorityColor(task.priority)}`}>{task.priority?.toUpperCase()}</span>
+                            <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 capitalize">{task.status?.replace('_', ' ')}</span>
+                            {task.status !== 'completed' && (
+                              <button 
+                                onClick={() => openUpdateModal(task)}
+                                className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-sm font-medium rounded-lg hover:border-blue-300 hover:text-blue-700 transition-colors shadow-sm"
+                              >
+                                Log Time
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* PROFILE VIEW */}
+          {/* --- PROFILE VIEW --- */}
           {activeTab === 'profile' && (
             <div className="max-w-3xl mx-auto animate-in fade-in duration-300">
               <h1 className="text-2xl font-bold text-slate-800 mb-6">Employee Profile</h1>
-              <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-8">
-                <div className="flex items-center gap-6 mb-8 pb-8 border-b border-slate-100">
-                  <div className="w-20 h-20 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-2xl">{user?.employee_id?.substring(0,2)}</div>
-                  <div>
-                    <h2 className="text-xl font-bold text-slate-800">{user?.employee_id}</h2>
-                    <p className="text-slate-500 capitalize">{user?.designation}</p>
+              
+              <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                
+                {/* Profile Header section */}
+                <div className="p-8 border-b border-slate-100 flex flex-col md:flex-row items-center md:items-start gap-6 relative">
+                  {/* Dynamic Avatar based on Name */}
+                  <div className="w-24 h-24 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-3xl shadow-sm border-4 border-white">
+                    {user?.name ? user.name.substring(0, 2).toUpperCase() : user?.employee_id?.substring(0, 2)}
+                  </div>
+                  
+                  <div className="text-center md:text-left flex-1">
+                    <h2 className="text-2xl font-bold text-slate-800">{user?.name || 'Employee Name'}</h2>
+                    <p className="text-slate-500 capitalize font-medium">{user?.designation}</p>
+                    
+                    {/* Tags */}
+                    <div className="mt-3 flex flex-wrap items-center justify-center md:justify-start gap-2">
+                      <span className={`px-2.5 py-1 text-xs font-bold rounded-md uppercase tracking-wide ${user?.status?.toLowerCase() === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {user?.status || 'Active'}
+                      </span>
+                      <span className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-bold rounded-md uppercase tracking-wide">
+                        {user?.experience_level || 'Level'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Employee ID Badge (Top Right) */}
+                  <div className="absolute top-8 right-8 hidden md:block text-right">
+                    <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-1">Employee ID</p>
+                    <p className="text-lg font-mono font-bold text-slate-700">{user?.employee_id}</p>
                   </div>
                 </div>
+
+                {/* Details Grid */}
+                <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">Contact & Department</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Email Address</label>
+                        <p className="text-sm font-medium text-slate-800 mt-1">{user?.email || 'Not Provided'}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Reporting Manager</label>
+                        <p className="text-sm font-medium text-slate-800 mt-1 font-mono">{user?.manager_id || 'Not Assigned'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-800 mb-4 uppercase tracking-wider">Skills & Capacity</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Primary Skill</label>
+                        <p className="text-sm font-medium text-slate-800 mt-1 capitalize">{user?.primary_skill || 'Not Specified'}</p>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Weekly Capacity</label>
+                        <p className="text-sm font-medium text-slate-800 mt-1">{user?.weekly_capacity || 40} Hours</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer Action Area with Logout */}
+                <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-end">
+                  <button 
+                    onClick={handleLogout} 
+                    className="px-6 py-2.5 bg-white border border-red-200 text-red-600 font-medium rounded-lg hover:bg-red-50 hover:border-red-300 transition-colors shadow-sm flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                    Sign Out
+                  </button>
+                </div>
+
               </div>
             </div>
           )}
         </div>
 
-        {/* --- UPDATE TASK MODAL OVERLAY --- */}
+        {/* UPDATE TASK MODAL OVERLAY */}
         {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4 animate-in fade-in duration-200">
             <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden">

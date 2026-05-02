@@ -118,19 +118,28 @@ export default function ManagerHome() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...newTask,
+          estimated_hours: parseFloat(newTask.estimated_hours), // Ensure it's a number, not a string
           created_by_manager_id: user.employee_id,
           assigned_employee_id: employeeId
         })
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.detail);
       
+      if (!response.ok) {
+        throw new Error(result.detail || "Failed to assign task");
+      }
+      
+      // Success! Refresh the dashboard data
       await fetchDashboardData(user.employee_id);
       
+      // Close modal and reset form
       setIsModalOpen(false);
       setModalStep(1);
       setNewTask({ title: '', task_type: 'Feature', required_skill: 'Frontend', priority: 'medium', estimated_hours: 8, due_date: '' });
+      
     } catch (err) {
+      // FIX: Alert the user immediately so it doesn't fail silently!
+      alert("❌ Assignment Failed: " + err.message);
       setError(err.message);
     } finally {
       setIsSubmitting(false);

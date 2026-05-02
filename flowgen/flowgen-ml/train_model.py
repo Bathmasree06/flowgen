@@ -3,28 +3,29 @@ import pandas as pd
 import psycopg2
 from sklearn.ensemble import RandomForestClassifier
 import joblib
-from dotenv import load_dotenv
+import warnings
 
-# Load database credentials from your backend .env file
-dotenv_path = os.path.join(os.path.dirname(__file__), '..', 'flowgen-backend', '.env')
-load_dotenv(dotenv_path)
+# Suppress the pandas SQLAlchemy warning for a cleaner terminal output
+warnings.filterwarnings('ignore', category=UserWarning)
 
 print("Connecting to PostgreSQL database...")
+
+# Directly placing your credentials here so we don't need the .env file!
 conn = psycopg2.connect(
-    host=os.getenv("DB_HOST"), 
-    port=os.getenv("DB_PORT"),
-    dbname=os.getenv("DB_NAME"), 
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD")
+    host="localhost", 
+    port="5432",
+    dbname="flowgen_db", 
+    user="postgres",
+    password="Bathu@123" 
 )
 
-# Fetch historical completed tasks
+# Fetch historical completed tasks, grabbing actual_hours this time
 print("Fetching historical task data...")
 query = """
     SELECT 
         t.estimated_hours, t.required_skill, t.priority,
         e.primary_skill, e.experience_level, e.weekly_capacity,
-        a.on_time
+        a.actual_hours
     FROM task_assignments a
     JOIN tasks t ON a.task_id = t.task_id
     JOIN employees e ON a.employee_id = e.employee_id
@@ -40,6 +41,11 @@ if df.empty:
 print(f"Data loaded successfully. Training on {len(df)} records.")
 
 # --- FEATURE ENGINEERING ---
+# Dynamically calculate if the task was completed on time
+# If actual_hours <= estimated_hours, it's a success (1), else failure (0)
+df['actual_hours'] = df['actual_hours'].fillna(df['estimated_hours']) 
+df['on_time'] = (df['actual_hours'] <= df['estimated_hours']).astype(int)
+
 # 1. Create a binary feature: Do the required task skills match the employee's primary skill?
 df['skill_match'] = (df['required_skill'] == df['primary_skill']).astype(int)
 
@@ -53,7 +59,7 @@ df['pri_num'] = df['priority'].map(pri_map).fillna(2)
 
 # --- DEFINE X (Features) and Y (Target) ---
 X = df[['estimated_hours', 'skill_match', 'exp_num', 'pri_num']]
-y = df['on_time'].astype(int)
+y = df['on_time']
 
 # --- TRAIN THE MODEL ---
 print("Training Random Forest Classifier...")

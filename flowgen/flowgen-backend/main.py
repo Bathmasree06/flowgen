@@ -5,6 +5,16 @@ from database import get_db_connection
 from psycopg2.extras import RealDictCursor
 from typing import Union
 import datetime
+import joblib
+import pandas as pd
+
+# --- LOAD MACHINE LEARNING MODEL ---
+try:
+    allocation_model = joblib.load('flowgen_allocation_model.joblib')
+    print("✅ ML Model loaded successfully into FastAPI!")
+except Exception as e:
+    allocation_model = None
+    print(f"⚠️ Warning: ML model not found. Using fallback. Error: {e}")
 
 app = FastAPI(title="Flowgen API")
 
@@ -243,10 +253,14 @@ def get_recommendations(manager_id: str, request: RecommendationRequest):
         # 1. ISOLATION RULE: Fetch ONLY employees reporting to this manager
         cursor.execute("""
             SELECT employee_id, name, primary_skill, experience_level, weekly_capacity 
-            FROM employees WHERE manager_id = %s AND status = 'active'
+            FROM employees WHERE manager_id = %s
         """, (manager_id,))
         team = cursor.fetchall()
         
+        # If the manager has no team, return empty
+        if not team:
+            return {"status": "success", "data": []}
+            
         recommendations = []
         
         for emp in team:
@@ -260,36 +274,56 @@ def get_recommendations(manager_id: str, request: RecommendationRequest):
             workload_result = cursor.fetchone()
             current_workload = workload_result['total_assigned'] if workload_result['total_assigned'] else 0
             
-            available_capacity = emp['weekly_capacity'] - current_workload
+            weekly_cap = emp['weekly_capacity'] if emp['weekly_capacity'] else 40
+            available_capacity = weekly_cap - current_workload
             
-            # 3. SCORING ALGORITHM (Foundation for ML Integration)
             score = 0
             reasons = []
             
-            # Skill Match
-            if str(emp['primary_skill']).lower() == str(request.required_skill).lower():
-                score += 60
-                reasons.append("Exact skill match")
-            else:
-                score += 10
-                reasons.append("Cross-training opportunity")
+            # --- 3. INTELLIGENT ML SCORING ALGORITHM ---
+            if allocation_model:
+                # Prepare data for model: ['estimated_hours', 'skill_match', 'exp_num', 'pri_num']
+                skill_match = 1 if str(emp['primary_skill']).lower() == str(request.required_skill).lower() else 0
                 
-            # Capacity Match
-            if available_capacity >= request.estimated_hours:
-                score += 40
-                reasons.append(f"Has {available_capacity}h available capacity")
-            elif available_capacity > 0:
-                score += 20
-                reasons.append(f"Limited capacity ({available_capacity}h free)")
+                exp_map = {'Junior': 1, 'Mid-Level': 2, 'Senior': 3, 'Lead': 4}
+                exp_num = exp_map.get(emp['experience_level'], 2)
+                pri_num = 2 # Default priority to medium for capacity testing
+                
+                # Predict probability of success
+                features = pd.DataFrame([[request.estimated_hours, skill_match, exp_num, pri_num]], 
+                                        columns=['estimated_hours', 'skill_match', 'exp_num', 'pri_num'])
+                
+                success_prob = allocation_model.predict_proba(features)[0][1] 
+                score = int(success_prob * 100)
+                
+                # Generate human-readable reasons based on AI output
+                if score >= 80:
+                    reasons.append("ML Predicts High Success")
+                elif score >= 50:
+                    reasons.append("ML Predicts Moderate Success")
+                else:
+                    reasons.append("ML Predicts Risk of Delay")
+                    
+                if skill_match == 1: reasons.append("Exact Skill Match")
+                
+                # Safety override: Penalize if they don't have enough weekly hours
+                if available_capacity < request.estimated_hours:
+                    score -= 20
+                    reasons.append("Warning: Over Capacity")
             else:
-                score -= 30
-                reasons.append("Currently over capacity")
+                # Fallback rule-based heuristic if ML fails
+                if str(emp['primary_skill']).lower() == str(request.required_skill).lower():
+                    score += 60
+                    reasons.append("Exact skill match")
+                if available_capacity >= request.estimated_hours:
+                    score += 40
+                    reasons.append("Has capacity")
                 
             recommendations.append({
                 "employee_id": emp['employee_id'],
                 "name": emp['name'],
-                "match_score": max(0, min(100, score)), # Ensure score is between 0 and 100
-                "reason": " • ".join(reasons),
+                "match_score": max(0, min(100, score)), # Ensure score never goes below 0 or above 100
+                "reason": " • ".join(reasons) if reasons else "Available",
                 "available_capacity": available_capacity
             })
             
@@ -306,10 +340,10 @@ def get_recommendations(manager_id: str, request: RecommendationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recommendation engine failed: {str(e)}")
 
+import random # Ensure this is at the top of your file if it isn't already
 
 @app.post("/api/tasks/create-and-assign")
 def create_and_assign_task(request: dict):
-    # This single transaction creates the task AND assigns it instantly
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -317,21 +351,24 @@ def create_and_assign_task(request: dict):
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 1. Insert Task
-        cursor.execute("""
-            INSERT INTO tasks (title, task_type, required_skill, priority, estimated_hours, due_date, created_by_manager_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            RETURNING task_id;
-        """, (request['title'], request['task_type'], request['required_skill'], request['priority'], 
-              request['estimated_hours'], request['due_date'], request['created_by_manager_id']))
+        # FIX: Generate a custom task ID like 'T49281'
+        new_task_id = f"T{random.randint(10000, 99999)}"
         
-        new_task_id = cursor.fetchone()['task_id']
+        # 1. Insert Task WITH the generated task_id
+        cursor.execute("""
+            INSERT INTO tasks (task_id, title, task_type, required_skill, priority, estimated_hours, due_date, created_by_manager_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING task_id;
+        """, (new_task_id, request['title'], request['task_type'], request['required_skill'], request['priority'], 
+              float(request['estimated_hours']), request['due_date'], request['created_by_manager_id']))
+        
+        inserted_task_id = cursor.fetchone()['task_id']
         
         # 2. Insert Assignment
         cursor.execute("""
             INSERT INTO task_assignments (task_id, employee_id, assigned_by_manager_id, allocation_type, status)
-            VALUES (%s, %s, %s, %s, 'pending');
-        """, (new_task_id, request['assigned_employee_id'], request['created_by_manager_id'], 'algorithmic'))
+            VALUES (%s, %s, %s, %s, 'to_do');
+        """, (inserted_task_id, request['assigned_employee_id'], request['created_by_manager_id'], 'algorithmic'))
         
         conn.commit()
         cursor.close()
@@ -341,4 +378,5 @@ def create_and_assign_task(request: dict):
     except Exception as e:
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
+        print(f"🔥 DATABASE ERROR ON ASSIGNMENT: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Database Error: {str(e)}")
